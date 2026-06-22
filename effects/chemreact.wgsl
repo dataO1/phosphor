@@ -16,15 +16,20 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     let flatness = u.flatness;
 
     // ── Parameters ─────────────────────────────────────────
-    let feed_base  = param(0u) * 0.06 + 0.02;    // feed rate (0.02–0.08)
-    let kill_base  = param(1u) * 0.08 + 0.04;    // kill rate (0.04–0.12)
-    let diff_a     = param(2u) * 0.5 + 0.5;      // diffusion A (0.5–1.0)
-    let diff_b     = param(3u) * 0.3 + 0.2;      // diffusion B (0.2–0.5)
+    let feed_base  = param(0u) * 0.07 + 0.03;    // feed rate (0.03–0.10)
+    let kill_base  = param(1u) * 0.06 + 0.05;    // kill rate (0.05–0.11)
+    let diff_a     = param(2u) * 0.5 + 0.6;      // diffusion A (0.6–1.1)
+    let diff_b     = param(3u) * 0.3 + 0.25;     // diffusion B (0.25–0.55)
     let inject_str = param(4u) * 3.0 + 0.5;      // injection (0.5–3.5)
 
     // ── Audio → chemistry ──────────────────────────────────
-    let feed = feed_base + loudness * 0.03 + centroid * 0.02;
-    let kill = kill_base + centroid * 0.04 + (1.0 - flatness) * 0.02;
+    // Spatial variation: noise-based perturbation so patterns
+    // differ across the screen.
+    let pos_hash = fract(sin(dot(uv * 3.0, vec2f(127.1, 311.7))) * 43758.5453);
+    let feed_var = (pos_hash - 0.5) * 0.015;
+    let kill_var = (pos_hash - 0.5) * 0.01;
+    let feed = feed_base + loudness * 0.03 + centroid * 0.02 + feed_var;
+    let kill = kill_base + centroid * 0.04 + (1.0 - flatness) * 0.02 + kill_var;
     let dA = diff_a * (0.8 + bass * 0.4);
     let dB = diff_b * (0.7 + brill * 0.6);
 
@@ -54,10 +59,13 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     // minutes to bootstrap.
     let centre_dist = length(uv - 0.5);
     if u.frame_index < 5.0 {
-        // Single centre seed to kickstart the reaction
-        let seed_uv = exp(-centre_dist * 12.0);
-        U = max(U, seed_uv * 0.8);
-        V = max(V, seed_uv * 0.3);
+        // Three asymmetric seeds for richer starting patterns
+        let s1 = exp(-length(uv - vec2f(0.45, 0.48)) * 25.0);
+        let s2 = exp(-length(uv - vec2f(0.55, 0.52)) * 20.0);
+        let s3 = exp(-length(uv - vec2f(0.50, 0.45)) * 22.0);
+        let seed = max(max(s1 * 0.8, s2 * 0.6), s3 * 0.5);
+        U = max(U, seed);
+        V = max(V, seed * 0.3);
     }
 
     // ── Audio: barely-there background feed only ────────────
@@ -77,8 +85,10 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     // U stored in RGB (R=G=B=U → clean grayscale, no artifacts).
     // V stored in alpha (hidden from view).
     // Warm cream tint via subtle R>G>B channel bias.
-    // Base: grayscale from U
-    var rgb = vec3f(U);
+    // Visual: sharper contrast, less blob-like
+    let U_vis = smoothstep(0.06, 0.55, U);
+    // R = U (state), G,B = visual (won't be read as state)
+    var rgb = vec3f(U, U_vis * 0.95, U_vis * 0.85);
 
     // Subtle warmth: boost red slightly, reduce blue
     rgb = rgb * vec3f(1.05, 0.95, 0.85);
