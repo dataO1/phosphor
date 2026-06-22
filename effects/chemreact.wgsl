@@ -52,22 +52,25 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     U = clamp(U + dA * lapU - react + feed * (1.0 - U), 0.0, 1.0);
     V = clamp(V + dB * lapV + react - (kill + feed) * V, 0.0, 1.0);
 
-    // ── Audio injection (background only — pattern dominates) ─
-    // Inject U (not V) so audio gently feeds the existing patterns
-    // rather than creating new foreground shapes.
+    // ── Initial seed: kickstart the reaction on first frames ─
+    // Without this, the RD field starts from black and takes
+    // minutes to bootstrap.
     let centre_dist = length(uv - 0.5);
+    if u.frame_index < 5.0 {
+        // Centre seed — a rich blob of U and V to start the reaction
+        let seed_uv = exp(-centre_dist * 15.0);
+        U = max(U, seed_uv * 0.7);
+        V = max(V, seed_uv * 0.25);
+        // A few scattered micro-seeds for variety
+        let scat = step(0.85, fract(sin(dot(floor(uv * 8.0), vec2f(127.1, 311.7))) * 43758.5453));
+        U = max(U, scat * 0.3);
+        V = max(V, scat * 0.1);
+    }
 
-    // Beat: very soft wide centre glow on U
-    let beat_inject = beat * exp(-centre_dist * 2.5) * inject_str * 0.06;
-    U = clamp(U + beat_inject, 0.0, 1.0);
-
-    // Onset: barely-there haze on U
-    let drop_hash = fract(sin(dot(floor(uv * 35.0), vec2f(127.1, 311.7))) * 43758.5453);
-    let drop = onset * smoothstep(0.6, 0.97, drop_hash) * inject_str * 0.04;
-    U = clamp(U + drop, 0.0, 1.0);
-
-    // RMS: slow global feed (keeps reaction alive, invisible)
-    U = clamp(U + loudness * 0.003, 0.0, 1.0);
+    // ── Audio: barely-there background feed only ────────────
+    // No beat/onset injection — the pattern evolves on its own.
+    // Audio just gently sustains the reaction.
+    U = clamp(U + loudness * inject_str * 0.003, 0.0, 1.0);
 
     // V decay: slow, prevents saturation
     V = V * 0.995;
@@ -82,8 +85,6 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     // U stored in RGB (R=G=B=U → clean grayscale, no artifacts).
     // V stored in alpha (hidden from view).
     // Warm cream tint via subtle R>G>B channel bias.
-    // (centre_dist defined above in injection section)
-
     // Base: grayscale from U
     var rgb = vec3f(U);
 
