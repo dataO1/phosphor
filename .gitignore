@@ -1,0 +1,9 @@
+# Direnv
+.direnv/
+
+# Nix
+result
+result-*
+
+# User phosphor config (generated at runtime in ~/.config/phosphor/)
+# This project dir is just the flake wrapper — no config here.
