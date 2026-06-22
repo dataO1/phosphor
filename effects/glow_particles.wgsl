@@ -1,5 +1,5 @@
 // Glow Particles — Audio-reactive glowing particles with slow circular drift.
-// Louder = faster motion, more colorful. Frequency bands map to color.
+// Louder = faster motion, more colourful. Frequency bands map to colour.
 // Uses feedback for motion trails.
 
 fn hash2(p: vec2f) -> f32 {
@@ -34,11 +34,12 @@ fn hsv2rgb(c: vec3f) -> vec3f {
     }
 }
 
-fn effect(uv: vec2f) -> vec4f {
+@fragment
+fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     let res = u.resolution;
     let aspect = res.x / res.y;
+    let uv = frag_coord.xy / res;
     let t = u.time;
-    let dt = u.delta_time;
 
     // ── Audio ──────────────────────────────────────────────
     let loudness = u.rms;                        // overall volume 0–1
@@ -47,17 +48,16 @@ fn effect(uv: vec2f) -> vec4f {
     let mid      = u.mid;                        // 500-2000 Hz
     let high     = u.presence + u.brilliance;    // 4-20 kHz
     let centroid = u.centroid;                   // spectral brightness
-    let flux     = u.flux;                       // rate of change
     let beat     = u.beat;                       // 1.0 on beat
 
     // ── Parameters ─────────────────────────────────────────
     let particle_count = param(0u) * 140.0 + 20.0;   // 20–160 particles
     let glow_size      = param(1u) * 0.015 + 0.003;  // glow radius
     let base_speed     = param(2u) * 0.4 + 0.05;     // orbit speed
-    let audio_drive    = param(3u) * 4.0 + 0.5;      // audio → motion multiplier
+    let audio_drive    = param(3u) * 2.0 + 0.3;      // audio → motion multiplier
     let trail_decay    = param(4u) * 0.3 + 0.82;     // feedback trail fade
 
-    // ── Color from audio ───────────────────────────────────
+    // ── Colour from audio ───────────────────────────────────
     // Low frequencies warm (red/orange), high frequencies cool (blue/violet)
     let hue = 0.05 + bass * 0.15 + mid * 0.25 + high * 0.35;
     let saturation = 0.3 + loudness * 0.7;
@@ -81,7 +81,7 @@ fn effect(uv: vec2f) -> vec4f {
         let py = (seed1 - 0.5) * 2.0;
 
         // ── Slow circular orbit (base motion) ──────────────
-        let orbit_r    = 0.02 + seed2 * 0.12;           // orbit radius
+        let orbit_r    = 0.015 + seed2 * 0.08;          // orbit radius
         let orbit_freq = base_speed * (0.3 + seed3 * 0.7); // unique per particle
         let orbit_phase = seed1 * 6.28318;                 // starting angle
 
@@ -90,18 +90,25 @@ fn effect(uv: vec2f) -> vec4f {
         let angle = orbit_phase + t * orbit_freq * speed_mult;
 
         // ── Audio jitter (louder = more displacement) ─────
-        let jitter_scale = loudness * audio_drive * 0.15;
+        let jitter_scale = loudness * audio_drive * 0.05;
         let jx = (hash2(vec2f(fi, t * 1.7 + 0.3)) - 0.5) * jitter_scale;
         let jy = (hash2(vec2f(fi, t * 1.9 + 0.7)) - 0.5) * jitter_scale;
 
         // Beat: quick outward burst
-        let beat_push = beat * loudness * 0.08;
+        let beat_push = beat * loudness * 0.04;
         let bx = cos(orbit_phase) * beat_push;
         let by = sin(orbit_phase) * beat_push;
 
+        // ── Global drift (all particles together) ────────
+        // Uniform Lissajous — same offset for every particle.
+        // Scales very gently with volume.
+        let global_scale = 0.01 + loudness * 0.02;
+        let gx = sin(t * 0.13) * global_scale;
+        let gy = cos(t * 0.11) * global_scale;
+
         // ── Final particle position ────────────────────────
-        let final_x = px + cos(angle) * orbit_r + jx + bx;
-        let final_y = py + sin(angle) * orbit_r + jy + by;
+        let final_x = px + cos(angle) * orbit_r + jx + bx + gx;
+        let final_y = py + sin(angle) * orbit_r + jy + by + gy;
 
         // ── Distance from current pixel to particle ────────
         let dx = uv.x * aspect - final_x;
@@ -114,7 +121,7 @@ fn effect(uv: vec2f) -> vec4f {
 
         if particle_brightness < 0.001 { continue; }
 
-        // ── Per-particle color variation ───────────────────
+        // ── Per-particle colour variation ───────────────────
         let p_hue = fract(hue + seed2 * 0.4 - 0.2);
         let p_val = particle_brightness * value_boost * (0.6 + seed3 * 0.4);
         let p_col = hsv2rgb(vec3f(p_hue, saturation, p_val));
