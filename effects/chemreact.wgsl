@@ -1,12 +1,42 @@
-// Chemreact — Gray-Scott reaction-diffusion in a fragment shader.
-// U (activator) stored in RGB channels → drives the visual as warm cream/purple.
-// V (inhibitor) stored in alpha channel → hidden from view, preserved for RD.
-// Audio injects fresh chemical, modulating feed/kill/diffusion rates.
+// Chemreact — Flow-field video feedback.
+// Each frame, UV coordinates are warped by a noise field before
+// sampling the previous frame. The warped feedback blends with
+// the current frame. Audio modulates warp intensity and speed.
+// Creates organic flowing landscapes — no reaction-diffusion blobs.
+
+fn hash2(p: vec2f) -> f32 {
+    return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+}
+
+fn noise2(p: vec2f) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(hash2(i), hash2(i + vec2f(1.0, 0.0)), u.x),
+        mix(hash2(i + vec2f(0.0, 1.0)), hash2(i + vec2f(1.0, 1.0)), u.x),
+        u.y
+    );
+}
+
+fn fbm2(p: vec2f) -> f32 {
+    var v = 0.0;
+    var a = 0.5;
+    var s = 1.0;
+    for (var i = 0; i < 4; i++) {
+        v += a * noise2(p * s);
+        s *= 2.2;
+        a *= 0.45;
+    }
+    return v;
+}
 
 @fragment
 fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     let res = u.resolution;
-    let uv = frag_coord.xy / res;
+    var uv = frag_coord.xy / res;
+    let aspect = res.x / res.y;
+    let t = u.time;
 
     // ── Audio ──────────────────────────────────────────────
     let loudness = u.rms;
@@ -16,79 +46,59 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     let flatness = u.flatness;
 
     // ── Parameters ─────────────────────────────────────────
-    let feed_base  = param(0u) * 0.06 + 0.02;    // feed rate (0.02–0.08)
-    let kill_base  = param(1u) * 0.08 + 0.04;    // kill rate (0.04–0.12)
-    let diff_a     = param(2u) * 0.5 + 0.5;      // diffusion A (0.5–1.0)
-    let diff_b     = param(3u) * 0.3 + 0.2;      // diffusion B (0.2–0.5)
-    let inject_str = param(4u) * 3.0 + 0.5;      // injection (0.5–3.5)
+    let warp_amt   = param(0u) * 0.15 + 0.02;    // warp intensity
+    let flow_speed = param(1u) * 0.3 + 0.05;     // flow evolution speed
+    let decay      = param(2u) * 0.15 + 0.82;    // feedback decay
+    let contrast   = param(3u) * 0.8 + 0.6;      // contrast
+    let detail     = param(4u) * 6.0 + 2.0;      // noise detail
 
-    // ── Audio → chemistry ──────────────────────────────────
-    let feed = feed_base + loudness * 0.03 + centroid * 0.02;
-    let kill = kill_base + centroid * 0.04 + (1.0 - flatness) * 0.02;
-    let dA = diff_a * (0.8 + bass * 0.4);
-    let dB = diff_b * (0.7 + brill * 0.6);
+    // ── Audio → dynamics ───────────────────────────────────
+    let warp  = warp_amt * (0.4 + loudness * 1.2);
+    let flow  = flow_speed * (0.5 + centroid * 1.0);
+    let dcy   = decay * (0.95 + loudness * 0.05);
 
-    // ── Read previous state ────────────────────────────────
-    // R,G channels = U (visual + state), alpha = V (hidden state)
-    let inv_res = 1.0 / res;
-    let c  = feedback(uv);
-    let l  = feedback(uv - vec2f(inv_res.x, 0.0));
-    let r  = feedback(uv + vec2f(inv_res.x, 0.0));
-    let u_  = feedback(uv + vec2f(0.0, inv_res.y));
-    let d_  = feedback(uv - vec2f(0.0, inv_res.y));
+    // ── Flow field ─────────────────────────────────────────
+    // Audio-modulated noise creates the warp vectors
+    let n1 = fbm2(uv * detail + vec2f(t * flow, t * flow * 0.7));
+    let n2 = fbm2(uv * detail + vec2f(t * flow * 0.8 + 5.0, t * flow * 0.6 + 3.0));
+    let n3 = fbm2(uv * detail * 0.5 + vec2f(t * flow * 0.3, -t * flow * 0.4));
 
-    var U = c.r;  // stored in red (also == green == blue)
-    var V = c.a;  // stored in alpha (hidden)
+    // Warp UV: layered noise creates complex organic displacement
+    let wx = (n1 - 0.5) * warp * 2.0 + (n3 - 0.5) * warp * 0.8;
+    let wy = (n2 - 0.5) * warp * 2.0 + (n3 - 0.5) * warp * 0.8;
 
-    // ── 5-point Laplacian ──────────────────────────────────
-    let lapU = (l.r + r.r + u_.r + d_.r) - 4.0 * U;
-    let lapV = (l.a + r.a + u_.a + d_.a) - 4.0 * V;
+    var warped_uv = uv + vec2f(wx, wy);
 
-    // ── Gray-Scott step ────────────────────────────────────
-    let react = U * V * V;
-    U = clamp(U + dA * lapU - react + feed * (1.0 - U), 0.0, 1.0);
-    V = clamp(V + dB * lapV + react - (kill + feed) * V, 0.0, 1.0);
+    // ── Sample feedback at warped UV ───────────────────────
+    var col = feedback(warped_uv).rgb;
 
-    // ── Initial seed: kickstart the reaction on first frames ─
-    // Without this, the RD field starts from black and takes
-    // minutes to bootstrap.
-    let centre_dist = length(uv - 0.5);
-    if u.frame_index < 5.0 {
-        // Single centre seed to kickstart the reaction
-        let seed_uv = exp(-centre_dist * 12.0);
-        U = max(U, seed_uv * 0.8);
-        V = max(V, seed_uv * 0.3);
+    // Second feedback read at different warp (adds complexity)
+    let wx2 = (noise2(uv * detail * 1.3 + t * flow * 0.5) - 0.5) * warp * 1.5;
+    let wy2 = (noise2(uv * detail * 1.3 + t * flow * 0.5 + 3.0) - 0.5) * warp * 1.5;
+    col += feedback(uv + vec2f(wx2, wy2)).rgb * 0.3;
+
+    // ── Initial seed: organic noise pattern ────────────────
+    if u.frame_index < 3.0 {
+        let seed = fbm2(uv * 4.0 + t * 0.1) * 0.6 + 0.2;
+        col = max(col, vec3f(seed));
     }
 
-    // ── Audio: barely-there background feed only ────────────
-    // Audio just gently sustains the reaction.
-    U = clamp(U + loudness * inject_str * 0.003, 0.0, 1.0);
+    // ── Decay ──────────────────────────────────────────────
+    col *= dcy;
 
-    // V decay: slow, prevents saturation
-    V = V * 0.995;
+    // ── Contrast + colour ──────────────────────────────────
+    // Subtle warm tint
+    col = col * vec3f(1.08, 0.95, 0.82);
+    // Contrast push
+    col = (col - 0.08) * contrast;
+    col = clamp(col, vec3f(0.0), vec3f(1.0));
 
-    // Tiny V feed: keeps the reaction alive without visible artifacts
-    V = clamp(V + 0.0005 + loudness * 0.001, 0.0, 1.0);
+    // ── Vignette ───────────────────────────────────────────
+    let centre_dist = length(uv - 0.5);
+    let vig = 1.0 - smoothstep(0.5, 1.6, centre_dist * 1.4) * 0.3;
+    col *= vig;
 
-    // U recovery
-    U = clamp(U + feed * (1.0 - U) * 0.1, 0.0, 1.0);
-
-    // ── Visualize ──────────────────────────────────────────
-    // U stored in RGB (R=G=B=U → clean grayscale, no artifacts).
-    // V stored in alpha (hidden from view).
-    // Warm cream tint via subtle R>G>B channel bias.
-    // Base: grayscale from U
-    var rgb = vec3f(U);
-
-    // Subtle warmth: boost red slightly, reduce blue
-    rgb = rgb * vec3f(1.05, 0.95, 0.85);
-
-    // Vignette
-    let vig = 1.0 - smoothstep(0.5, 1.6, centre_dist * 1.4) * 0.35;
-    rgb *= vig;
-    rgb = clamp(rgb, vec3f(0.0), vec3f(1.0));
-
-    // ── Return: warm-tinted visual. R≈G≈B≈U preserves state. ──
-    // Alpha carries V for the next Gray-Scott step.
-    return vec4f(rgb, V * vig);
+    // ── Store V in alpha for unused channel ────────────────
+    let state_val = dot(col, vec3f(0.33));
+    return vec4f(col, state_val);
 }
