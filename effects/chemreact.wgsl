@@ -52,20 +52,20 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     U = clamp(U + dA * lapU - react + feed * (1.0 - U), 0.0, 1.0);
     V = clamp(V + dB * lapV + react - (kill + feed) * V, 0.0, 1.0);
 
-    // ── Audio injection ────────────────────────────────────
+    // ── Audio injection (gentle, organic) ──────────────────
     let centre_dist = length(uv - 0.5);
 
-    // Beat: ring injection
-    let ring = exp(-abs(centre_dist - 0.15) * 20.0) * beat * inject_str * 0.3;
-    V = clamp(V + ring, 0.0, 1.0);
+    // Beat: soft centre glow (ring shape looked unnatural)
+    let beat_inject = beat * exp(-centre_dist * 6.0) * inject_str * 0.15;
+    V = clamp(V + beat_inject, 0.0, 1.0);
 
-    // Onset: scattered drops
-    let drop_hash = fract(sin(dot(floor(uv * 25.0), vec2f(127.1, 311.7))) * 43758.5453);
-    let drop = onset * step(0.94, drop_hash) * inject_str * 0.25;
+    // Onset: soft scattered haze (not hard-edged drops)
+    let drop_hash = fract(sin(dot(floor(uv * 30.0), vec2f(127.1, 311.7))) * 43758.5453);
+    let drop = onset * smoothstep(0.5, 0.96, drop_hash) * inject_str * 0.12;
     V = clamp(V + drop, 0.0, 1.0);
 
     // Quiet bass: slow centre feed
-    let bass_feed = bass * (1.0 - loudness) * exp(-centre_dist * 2.5) * 0.01;
+    let bass_feed = bass * (1.0 - loudness) * exp(-centre_dist * 2.5) * 0.008;
     V = clamp(V + bass_feed, 0.0, 1.0);
 
     // V decay (prevents saturation)
