@@ -7,15 +7,12 @@
 fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     let res = u.resolution;
     let uv = frag_coord.xy / res;
-    let t = u.time;
 
     // ── Audio ──────────────────────────────────────────────
     let loudness = u.rms;
     let centroid = u.centroid;
     let bass     = u.bass;
     let brill    = u.brilliance;
-    let beat     = u.beat;
-    let onset    = u.onset;
     let flatness = u.flatness;
 
     // ── Parameters ─────────────────────────────────────────
@@ -57,18 +54,13 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     // minutes to bootstrap.
     let centre_dist = length(uv - 0.5);
     if u.frame_index < 5.0 {
-        // Centre seed — a rich blob of U and V to start the reaction
-        let seed_uv = exp(-centre_dist * 15.0);
-        U = max(U, seed_uv * 0.7);
-        V = max(V, seed_uv * 0.25);
-        // A few scattered micro-seeds for variety
-        let scat = step(0.85, fract(sin(dot(floor(uv * 8.0), vec2f(127.1, 311.7))) * 43758.5453));
-        U = max(U, scat * 0.3);
-        V = max(V, scat * 0.1);
+        // Single centre seed to kickstart the reaction
+        let seed_uv = exp(-centre_dist * 12.0);
+        U = max(U, seed_uv * 0.8);
+        V = max(V, seed_uv * 0.3);
     }
 
     // ── Audio: barely-there background feed only ────────────
-    // No beat/onset injection — the pattern evolves on its own.
     // Audio just gently sustains the reaction.
     U = clamp(U + loudness * inject_str * 0.003, 0.0, 1.0);
 
@@ -90,9 +82,6 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
 
     // Subtle warmth: boost red slightly, reduce blue
     rgb = rgb * vec3f(1.05, 0.95, 0.85);
-
-    // Beat flash
-    rgb += beat * vec3f(0.15, 0.12, 0.08) * exp(-centre_dist * 3.0);
 
     // Vignette
     let vig = 1.0 - smoothstep(0.5, 1.6, centre_dist * 1.4) * 0.35;
