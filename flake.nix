@@ -1,3 +1,11 @@
+# To update Phosphor:
+#   1. Change `version` below to the new tag (e.g. "1.8.0")
+#   2. Set `hash` to "" (empty string) and run `nix build .#phosphor`
+#   3. Copy the hash Nix prints ("got: sha256-...") into `hash` below
+#   4. Commit and push.
+#
+# `nix flake update` handles nixpkgs + flake-utils; Phosphor is
+# manually pinned so you control when the visual engine changes.
 {
   description = "Phosphor — real-time particle and shader engine for live performance";
 
