@@ -78,7 +78,7 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     // U stored in RGB (R=G=B=U → clean grayscale, no artifacts).
     // V stored in alpha (hidden from view).
     // Warm cream tint via subtle R>G>B channel bias.
-    let centre_dist = length(uv - 0.5);
+    // (centre_dist defined above in injection section)
 
     // Base: grayscale from U
     var rgb = vec3f(U);
