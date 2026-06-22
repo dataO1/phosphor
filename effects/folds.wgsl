@@ -1,8 +1,11 @@
-// Folds — Intricate feedback kaleidoscope with audio-reactive line geometry.
-// Classic video-feedback technique (Inigo Quilez): each frame, the previous
-// image is rotated, scaled, and kaleidoscopically folded back onto itself.
-// Thin spectral lines are drawn on top, then the whole thing feeds back.
-// Result: sharp, endlessly complex spiraling mandala patterns.
+// Folds — Deep video-feedback kaleidoscope.
+// Each frame: the previous image is rotated, scaled down, and folded
+// back into itself. The transform chains frame-over-frame, creating
+// visible nested spirals that recede into the centre.
+//
+// Two feedback reads at different scales make the recursion obvious.
+// A second folding pass breaks the circular symmetry into sharp
+// geometric fragments. Warm gold palette on deep charcoal.
 
 @fragment
 fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
@@ -12,7 +15,6 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     let t = u.time;
 
     // ── Audio ──────────────────────────────────────────────
-    let sub      = u.sub_bass;
     let bass     = u.bass;
     let low_mid  = u.low_mid;
     let mid      = u.mid;
@@ -26,143 +28,149 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     let flux     = u.flux;
 
     // ── Parameters ─────────────────────────────────────────
-    let folds       = param(0u) * 10.0 + 2.0;      // kaleidoscope symmetry (2–12)
-    let rotation    = param(1u) * 0.06 + 0.01;     // rotation per frame
-    let zoom        = param(2u) * 0.03 + 0.97;     // scale per feedback pass
-    let line_count  = param(3u) * 80.0 + 8.0;      // spectral lines (8–88)
-    let line_width  = param(4u) * 0.004 + 0.0008;  // line thickness
+    let folds       = param(0u) * 9.0 + 3.0;       // primary symmetry (3–12)
+    let rotation    = param(1u) * 0.08 + 0.015;    // spin per frame
+    let zoom        = param(2u) * 0.06 + 0.92;     // scale per pass (tighter)
+    let complexity  = param(3u) * 6.0 + 2.0;       // secondary fold count
+    let distortion  = param(4u) * 0.04;            // organic warp amount
 
     // ═══════════════════════════════════════════════════════
-    // KALEIDOSCOPIC FEEDBACK TRANSFORM
+    // PALETTE: warm gold + ivory on charcoal
+    // ═══════════════════════════════════════════════════════
+    let bg_col    = vec3f(0.04, 0.03, 0.02);    // deep charcoal
+    let gold      = vec3f(0.95, 0.62, 0.18);    // warm gold
+    let ivory     = vec3f(0.92, 0.85, 0.72);    // cream
+    let copper    = vec3f(0.82, 0.35, 0.12);    // burnt orange
+    let highlight = vec3f(0.98, 0.95, 0.88);    // near-white
+
+    // ═══════════════════════════════════════════════════════
+    // FEEDBACK TRANSFORM #1 — primary spiral
     // ═══════════════════════════════════════════════════════
 
-    // Center origin, aspect-correct
-    var p = (uv - 0.5) * vec2f(aspect, 1.0);
+    // Shift origin to centre (with slight audio-driven offset)
+    var p = uv - vec2f(
+        0.5 + sin(t * 0.17) * 0.04 * loudness,
+        0.5 + cos(t * 0.13) * 0.04 * loudness
+    );
+    p.x *= aspect;
 
-    // Convert to polar
-    let radius = length(p);
-    var angle = atan2(p.y, p.x);
+    // Polar coordinates
+    let r = length(p);
+    var a = atan2(p.y, p.x);
 
-    // N-fold symmetry: fold angle into a wedge, mirror within
+    // Primary N-fold kaleidoscope
     let wedge = 6.28318 / folds;
-    angle = abs(angle);                          // mirror across x-axis
-    angle = angle - wedge * floor(angle / wedge); // wrap into [0, wedge)
-    angle = min(angle, wedge - angle);           // mirror within wedge
+    a = abs(a);
+    a = a - wedge * floor(a / wedge);
+    a = min(a, wedge - a);
 
-    // Flux dynamically changes the fold count
-    let dynamic_folds = folds + flux * 4.0;
-    let dynamic_wedge = 6.28318 / dynamic_folds;
-    angle = min(angle, dynamic_wedge - angle * (wedge / dynamic_wedge));
+    // Rotation — audio-accelerated
+    let rot = rotation * (1.0 + loudness * 4.0 + centroid * 3.0);
+    a = a + t * rot + centroid * 2.0;
 
-    // Rotation: audio accelerates spin
-    let rot_speed = rotation * (1.0 + loudness * 3.0 + centroid * 2.0);
-    angle = angle + t * rot_speed + centroid * 1.5;
+    // Scale down — creates the visible nesting
+    let sc = zoom * (1.0 + bass * 0.02);
 
-    // Scale: zoom creates the spiral depth
-    let sc = zoom * (1.0 + bass * 0.012);
-    let r2 = radius / sc;
+    // Secondary folding at a different symmetry (breaks circular monotony)
+    let wedge2 = 6.28318 / complexity;
+    let a2 = abs(a);
+    let a3 = a2 - wedge2 * floor(a2 / wedge2);
+    a = mix(a, min(a3, wedge2 - a3), 0.35 + loudness * 0.3);
 
     // Back to cartesian for feedback sample
-    p = vec2f(cos(angle) * r2, sin(angle) * r2);
+    let r_scaled = r / sc;
+    p = vec2f(cos(a) * r_scaled, sin(a) * r_scaled);
     var fuv = p / vec2f(aspect, 1.0) + 0.5;
 
-    // ═══════════════════════════════════════════════════════
-    // FEEDBACK READ
-    // ═══════════════════════════════════════════════════════
-
+    // ── Read feedback at transformed UV ────────────────────
     var col = feedback(fuv).rgb;
 
-    // Tiny spatial anti-aliasing blur on feedback
-    let fb_blur = (
-        feedback(fuv + vec2f( 0.001,  0.0)).rgb +
-        feedback(fuv + vec2f(-0.001,  0.0)).rgb +
-        feedback(fuv + vec2f( 0.0,  0.001)).rgb +
-        feedback(fuv + vec2f( 0.0, -0.001)).rgb
-    ) * 0.25;
-    col = mix(col, fb_blur, 0.06);
+    // ── Second feedback read at deeper zoom (visible nesting) ──
+    var p2 = (uv - 0.5) * vec2f(aspect, 1.0);
+    let r2 = length(p2);
+    var a4 = atan2(p2.y, p2.x);
+    a4 = abs(a4);
+    a4 = a4 - wedge * floor(a4 / wedge);
+    a4 = min(a4, wedge - a4);
+    a4 = a4 + t * rot * 1.3;
+    let sc2 = sc * sc;  // square the zoom for nested copies
+    p2 = vec2f(cos(a4) * r2 / sc2, sin(a4) * r2 / sc2);
+    let fuv2 = p2 / vec2f(aspect, 1.0) + 0.5;
+    col += feedback(fuv2).rgb * 0.45;
 
-    // Fade toward deep indigo (not black)
-    let decay = 0.93 + loudness * 0.02;
-    let bg = vec3f(0.015, 0.008, 0.05);  // deep indigo
-    col = col * decay + bg * (1.0 - decay);
+    // ── Organic distortion (subtle domain warp) ────────────
+    let warp_x = sin(fuv.y * 12.0 + t * 0.3) * cos(fuv.x * 8.0 + t * 0.25) * distortion;
+    let warp_y = cos(fuv.x * 10.0 + t * 0.35) * sin(fuv.y * 14.0 + t * 0.2) * distortion;
+    let warped = feedback(fuv + vec2f(warp_x, warp_y)).rgb;
+    col = mix(col, warped, 0.25);
 
-    // Subtle centre glow
-    let centre_glow = (1.0 - length(uv - 0.5) * 1.3) * 0.015;
-    col += bg * centre_glow;
+    // ── Decay toward charcoal background ───────────────────
+    let decay = 0.92 + loudness * 0.03;
+    col = col * decay + bg_col * (1.0 - decay);
 
-    // Contrast enhancement — keeps edges crisp
-    col = (col - 0.04) * 1.10;
+    // ── Subtle bloom-like centre accumulation ──────────────
+    let centre = 1.0 - length(uv - 0.5) * 2.2;
+    col += bg_col * max(0.0, centre) * 0.02;
+
+    // Contrast
+    col = (col - 0.03) * 1.08;
     col = clamp(col, vec3f(0.0), vec3f(1.0));
 
     // ═══════════════════════════════════════════════════════
-    // SPECTRAL LINES
+    // STRUCTURAL LINES — audio-driven geometric rays
     // ═══════════════════════════════════════════════════════
-    // Thin radial lines driven by frequency bands. Louder bands
-    // produce brighter, wider lines. The lines feed into the
-    // kaleidoscope on subsequent frames, creating infinite regress.
-
-    // Curated palette: warm amber → rose → violet → teal
-    let band_colors = array<vec3f, 7>(
-        vec3f(0.95, 0.45, 0.08),  // sub_bass  → amber
-        vec3f(0.90, 0.22, 0.28),  // bass      → rose
-        vec3f(0.75, 0.18, 0.55),  // low_mid   → magenta
-        vec3f(0.40, 0.28, 0.85),  // mid       → violet
-        vec3f(0.18, 0.45, 0.92),  // upper_mid → periwinkle
-        vec3f(0.08, 0.68, 0.72),  // presence  → teal
-        vec3f(0.25, 0.82, 0.88)   // brilliance → ice
-    );
+    let bands = array<f32, 6>(bass, low_mid, mid, up_mid, pres, brill);
+    let line_n = u32(complexity) * 4u + 4u;
 
     var lines = vec3f(0.0);
-    let n = u32(line_count);
-    let band_amps = array<f32, 7>(sub, bass, low_mid, mid, up_mid, pres, brill);
 
-    for (var i = 0u; i < n; i++) {
+    for (var i = 0u; i < line_n; i++) {
         let fi = f32(i);
-        let band_idx = i % 7u;
-        let amp = band_amps[band_idx];
-        if amp < 0.01 { continue; }
+        let band = bands[i % 6u];
+        if band < 0.015 { continue; }
 
-        // Line angle — evenly spaced + audio drift
-        let base_angle = fi / line_count * 6.28318;
-        let drift = sin(fi * 0.73 + t * (0.2 + amp * 0.4)) * amp * 0.03;
-        let la = base_angle + drift;
+        // Ray angle — even spacing + audio wobble
+        let ba = fi / f32(line_n) * 6.28318;
+        let wobble = sin(fi * 1.17 + t * 0.4 + band * 3.0) * band * 0.04;
+        let ra = ba + wobble;
 
-        // Line endpoint — audio pushes it outward
-        let lr = 0.05 + amp * 0.55 + onset * 0.08;
+        // Distance from pixel to this ray
+        let rx = uv.x - 0.5;
+        let ry = (uv.y - 0.5) * aspect;
+        let dist = abs(rx * sin(ra) - ry * cos(ra));
 
-        // Pixel distance to this radial line
-        let lx = uv.x - (0.5 + cos(la) * lr * 0.5);
-        let ly = (uv.y - (0.5 + sin(la) * lr * 0.5 * aspect)) * aspect;
-        let dist_to_line = abs(lx * sin(la) - ly * cos(la));
+        // Ray intensity — brighter near centre, audio-driven
+        let ray_len = 0.1 + band * 0.7 + onset * 0.1;
+        let along = rx * cos(ra) + ry * sin(ra);
+        let radial_fade = 1.0 - smoothstep(0.0, ray_len, abs(along));
 
-        // Gaussian line profile
-        let w = line_width * (0.4 + amp * 1.6);
-        let intensity = exp(-(dist_to_line * dist_to_line) / (w * w)) * amp * 0.55;
+        if radial_fade < 0.01 { continue; }
 
-        if intensity < 0.001 { continue; }
+        let w = param(4u) * 0.005 + 0.001;
+        let intensity = exp(-(dist * dist) / (w * w * (0.3 + band * 0.7)))
+                      * band * radial_fade * 0.5;
 
-        // Direct curated colour, tinted by centroid
-        let base_col = band_colors[band_idx];
-        let hue_shift = mix(1.0, 0.7 + centroid * 0.3, intensity);
-        let line_col = base_col * intensity * hue_shift;
-        lines += line_col;
+        if intensity < 0.0005 { continue; }
+
+        // Single-palette colour: gold tint with amplitude-driven brightness
+        let col_mix = mix(copper, gold, band);
+        lines += mix(col_mix, ivory, intensity * 0.6) * intensity;
     }
 
     // ═══════════════════════════════════════════════════════
     // COMPOSITE
     // ═══════════════════════════════════════════════════════
-
     col += lines;
 
-    // Beat: bright centre pulse
+    // Beat: brief centre pulse in highlight colour
     let centre_dist = length(uv - 0.5);
-    col += beat * exp(-centre_dist * 4.0) * 0.18;
+    col += beat * exp(-centre_dist * 5.0) * highlight * 0.25;
 
     // Subtle vignette
-    let vig = 1.0 - smoothstep(0.6, 1.5, centre_dist * 1.5) * 0.2;
+    let vig = 1.0 - smoothstep(0.7, 1.6, centre_dist * 1.4) * 0.3;
     col *= vig;
 
-    col = clamp(col, vec3f(0.0), vec3f(1.3));
+    col = clamp(col, vec3f(0.0), vec3f(1.2));
 
     return vec4f(col, 1.0);
 }
