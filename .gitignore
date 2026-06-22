@@ -5,5 +5,5 @@
 result
 result-*
 
-# User phosphor config (generated at runtime in ~/.config/phosphor/)
-# This project dir is just the flake wrapper — no config here.
+# Generated assets/ directory (created by shellHook from Nix store)
+assets/

@@ -97,10 +97,37 @@
           ];
 
           shellHook = ''
+            # Phosphor's assets_dir() checks CWD first. Set up a project-local
+            # assets/ that mirrors built-in assets (symlinked from Nix store)
+            # and has a writable effects/ + shaders/ for custom work.
+            PROJECT_DIR=''${PRJ_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")}
+            if [ -n "$PROJECT_DIR" ] && [ -d "$PROJECT_DIR/effects" ]; then
+              ASSETS="$PROJECT_DIR/assets"
+              NIX_ASSETS="${phosphor}/share/phosphor/assets"
+              if [ ! -d "$ASSETS" ]; then
+                mkdir -p "$ASSETS/effects" "$ASSETS/shaders"
+                for dir in fonts presets icon images web; do
+                  ln -sfn "$NIX_ASSETS/$dir" "$ASSETS/$dir" 2>/dev/null
+                done
+                # Symlink individual shader files from Nix store
+                for f in "$NIX_ASSETS/shaders/"*; do
+                  ln -sfn "$f" "$ASSETS/shaders/$(basename "$f")" 2>/dev/null
+                done
+                # Copy built-in .pfx effects
+                cp "$NIX_ASSETS/effects/"*.pfx "$ASSETS/effects/" 2>/dev/null
+                # Copy project custom effects
+                cp "$PROJECT_DIR/effects/"*.wgsl "$ASSETS/shaders/" 2>/dev/null
+                cp "$PROJECT_DIR/effects/"*.pfx "$ASSETS/effects/" 2>/dev/null
+                if [ -f "$NIX_ASSETS/phosphor-teaser.gif" ]; then
+                  ln -sfn "$NIX_ASSETS/phosphor-teaser.gif" "$ASSETS/phosphor-teaser.gif" 2>/dev/null
+                fi
+                echo "🎨 Phosphor assets set up from Nix store"
+              fi
+            fi
             echo "🎨 Phosphor devshell — v${phosphor.version}"
             echo "   phosphor          run the visual engine"
             echo "   Config dir:       ~/.config/phosphor/"
-            echo "   User effects:     ~/.config/phosphor/effects/"
+            echo "   Custom effects:   effects/ (versioned in repo → auto-linked to assets/)"
             echo "   Presets:          ~/.config/phosphor/presets/"
             echo "   Scenes:           ~/.config/phosphor/scenes/"
           '';
