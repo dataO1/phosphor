@@ -48,8 +48,8 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     // ── Parameters ─────────────────────────────────────────
     let warp_amt   = param(0u) * 0.15 + 0.02;    // warp intensity
     let flow_speed = param(1u) * 0.3 + 0.05;     // flow evolution speed
-    let decay      = param(2u) * 0.15 + 0.82;    // feedback decay
-    let contrast   = param(3u) * 0.8 + 0.6;      // contrast
+    let decay      = param(2u) * 0.10 + 0.88;    // feedback decay (0.88-0.98)
+    let contrast   = param(3u) * 0.4 + 0.8;      // contrast (gentler)
     let detail     = param(4u) * 6.0 + 2.0;      // noise detail
 
     // ── Audio → dynamics ───────────────────────────────────
@@ -67,7 +67,7 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     let wx = (n1 - 0.5) * warp * 2.0 + (n3 - 0.5) * warp * 0.8;
     let wy = (n2 - 0.5) * warp * 2.0 + (n3 - 0.5) * warp * 0.8;
 
-    var warped_uv = uv + vec2f(wx, wy);
+    var warped_uv = fract(uv + vec2f(wx, wy));
 
     // ── Sample feedback at warped UV ───────────────────────
     var col = feedback(warped_uv).rgb;
@@ -75,13 +75,13 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     // Second feedback read at different warp (adds complexity)
     let wx2 = (noise2(uv * detail * 1.3 + t * flow * 0.5) - 0.5) * warp * 1.5;
     let wy2 = (noise2(uv * detail * 1.3 + t * flow * 0.5 + 3.0) - 0.5) * warp * 1.5;
-    col += feedback(uv + vec2f(wx2, wy2)).rgb * 0.3;
+    col += feedback(fract(uv + vec2f(wx2, wy2))).rgb * 0.3;
 
-    // ── Initial seed: organic noise pattern ────────────────
-    if u.frame_index < 3.0 {
-        let seed = fbm2(uv * 4.0 + t * 0.1) * 0.6 + 0.2;
-        col = max(col, vec3f(seed));
-    }
+    // ── Initial seed + noise floor ─────────────────────────
+    // Always add subtle noise so feedback never hits pure black.
+    let seed_strength = mix(0.5, 0.06, step(10.0, u.frame_index));
+    let seed_noise = fbm2(uv * 4.5 + t * 0.07) * 0.5 + 0.25;
+    col = max(col, vec3f(seed_noise * seed_strength));
 
     // ── Decay ──────────────────────────────────────────────
     col *= dcy;
@@ -90,7 +90,7 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     // Subtle warm tint
     col = col * vec3f(1.08, 0.95, 0.82);
     // Contrast push
-    col = (col - 0.08) * contrast;
+    col = (col - 0.02) * contrast;
     col = clamp(col, vec3f(0.0), vec3f(1.0));
 
     // ── Vignette ───────────────────────────────────────────
