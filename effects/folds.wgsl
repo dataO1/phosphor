@@ -4,25 +4,6 @@
 // Thin spectral lines are drawn on top, then the whole thing feeds back.
 // Result: sharp, endlessly complex spiraling mandala patterns.
 
-fn hsv2rgb(c: vec3f) -> vec3f {
-    let h = c.x * 6.0;
-    let s = c.y;
-    let v = c.z;
-    let sec = u32(floor(h));
-    let f = h - f32(sec);
-    let p = v * (1.0 - s);
-    let q = v * (1.0 - s * f);
-    let t = v * (1.0 - s * (1.0 - f));
-    switch sec {
-        case 0u: { return vec3f(v, t, p); }
-        case 1u: { return vec3f(q, v, p); }
-        case 2u: { return vec3f(p, v, t); }
-        case 3u: { return vec3f(p, q, v); }
-        case 4u: { return vec3f(t, p, v); }
-        default: { return vec3f(v, p, q); }
-    }
-}
-
 @fragment
 fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     let res = u.resolution;
@@ -100,12 +81,17 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     ) * 0.25;
     col = mix(col, fb_blur, 0.06);
 
-    // Fade toward black
-    let decay = 0.94 + loudness * 0.02;
-    col *= decay;
+    // Fade toward deep indigo (not black)
+    let decay = 0.93 + loudness * 0.02;
+    let bg = vec3f(0.015, 0.008, 0.05);  // deep indigo
+    col = col * decay + bg * (1.0 - decay);
+
+    // Subtle centre glow
+    let centre_glow = (1.0 - length(uv - 0.5) * 1.3) * 0.015;
+    col += bg * centre_glow;
 
     // Contrast enhancement — keeps edges crisp
-    col = (col - 0.06) * 1.12;
+    col = (col - 0.04) * 1.10;
     col = clamp(col, vec3f(0.0), vec3f(1.0));
 
     // ═══════════════════════════════════════════════════════
@@ -115,16 +101,25 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
     // produce brighter, wider lines. The lines feed into the
     // kaleidoscope on subsequent frames, creating infinite regress.
 
-    let bands = array<f32, 7>(sub, bass, low_mid, mid, up_mid, pres, brill);
-    let hues  = array<f32, 7>(0.0, 0.08, 0.16, 0.35, 0.55, 0.68, 0.82);
+    // Curated palette: warm amber → rose → violet → teal
+    let band_colors = array<vec3f, 7>(
+        vec3f(0.95, 0.45, 0.08),  // sub_bass  → amber
+        vec3f(0.90, 0.22, 0.28),  // bass      → rose
+        vec3f(0.75, 0.18, 0.55),  // low_mid   → magenta
+        vec3f(0.40, 0.28, 0.85),  // mid       → violet
+        vec3f(0.18, 0.45, 0.92),  // upper_mid → periwinkle
+        vec3f(0.08, 0.68, 0.72),  // presence  → teal
+        vec3f(0.25, 0.82, 0.88)   // brilliance → ice
+    );
 
     var lines = vec3f(0.0);
     let n = u32(line_count);
+    let band_amps = array<f32, 7>(sub, bass, low_mid, mid, up_mid, pres, brill);
 
     for (var i = 0u; i < n; i++) {
         let fi = f32(i);
         let band_idx = i % 7u;
-        let amp = bands[band_idx];
+        let amp = band_amps[band_idx];
         if amp < 0.01 { continue; }
 
         // Line angle — evenly spaced + audio drift
@@ -146,8 +141,10 @@ fn fs_main(@builtin(position) frag_coord: vec4f) -> @location(0) vec4f {
 
         if intensity < 0.001 { continue; }
 
-        let h = fract(hues[band_idx] + centroid * 0.08);
-        let line_col = hsv2rgb(vec3f(h, 0.65 + amp * 0.35, intensity));
+        // Direct curated colour, tinted by centroid
+        let base_col = band_colors[band_idx];
+        let hue_shift = mix(1.0, 0.7 + centroid * 0.3, intensity);
+        let line_col = base_col * intensity * hue_shift;
         lines += line_col;
     }
 
